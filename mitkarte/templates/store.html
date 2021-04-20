@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block body %}
+    <h1>{{store.name}}</h1>
+    <small>Posted by {{store.poster}} on {{store.post_date}}</small>
+    <hr>
+    <div>
+        {{store.address}}
+        
+    </div>
+    <br>
+    <div>
+        Store category is : {{store.category}}
+    </div>
+    
+{% endblock %}  
