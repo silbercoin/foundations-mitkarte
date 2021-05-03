@@ -1,24 +1,55 @@
-from flask import Flask
-from flask import render_template, request, flash, redirect, url_for, session, logging
-# from data import Stores
-from flask_mysqldb import MySQL
-from wtforms import Form, StringField, TextAreaField, PasswordField, validators
+from flask import Flask, render_template, request, flash, redirect, url_for, session, logging
+import psycopg2
+import os
+import folium
+
+from sqlalchemy import create_engine, Table, Column, Integer, String, ForeignKey, func, DateTime, update
+from sqlalchemy.orm import sessionmaker, relationship, backref
+from sqlalchemy.ext.declarative import declarative_base
+
+from wtforms import Form, StringField, IntegerField, PasswordField, validators, SelectField
 from passlib.hash import sha256_crypt
 from functools import wraps
 
+
 app = Flask(__name__)
 
-# config Mysql
-app.config['MYSQL_HOST'] = '127.0.0.1'
-app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = ''
-app.config['MYSQL_DB'] = 'flaskapp'
-app.config['MYSQL_CURSORCLASS'] = 'DictCursor'
-# init mysql
-mysql = MySQL(app)
+engine = create_engine('postgresql://postgres:@localhost:5432/mitkarte')
+
+SessionDb = sessionmaker(bind=engine)
+sessionDb = SessionDb()
+
+Base = declarative_base()
 
 
-# Stores = Stores()
+class User(Base):
+    __tablename__ = 'user'
+
+    userId = Column(Integer, primary_key=True)
+    userEmail = Column(String(50), unique=True)
+    userPassword = Column(String(100))
+
+    posts = relationship('Store', backref='poster', lazy='dynamic')
+
+
+class Store(Base):
+    __tablename__ = 'store'
+
+    storeId = Column(Integer, primary_key=True)
+    storeName = Column(String(50), nullable=False)
+    storeAddress = Column(String(100), nullable=False)
+    storeZipcode = Column(Integer)
+    storeCity = Column(String(10), default='Berlin')
+    storeLat = Column(String(20))
+    storeLon = Column(String(20))
+    storeCategory = Column(String(50), nullable=False)
+    posttime = Column(DateTime(timezone=True), server_default=func.now())
+    posterId = Column(Integer, ForeignKey('user.userId'))
+    note = Column(String(255))
+
+
+Base.metadata.create_all(engine)
+
 
 # configure Flask using environment variables
 app.config.from_pyfile("config.py")
@@ -31,35 +62,30 @@ def index():
 
 @app.route("/about")
 def about():
-    return render_template("about.html")
+    start_coords = (52.520008, 13.404954)
+    folium_map = folium.Map(location=start_coords, zoom_start=12, tiles='https://api.mapbox.com/styles/v1/wanjeng/cko06mv2x5bib17oatlubjawm/tiles/256/{z}/{x}/{y}@2x?access_token=pk.eyJ1Ijoid2FuamVuZyIsImEiOiJja28wNnI2Y3gwY3AwMnhvYmFoaWtsMTJxIn0.R675jWsAAAi7rTRiZ7FQig',
+                            attr='Mapbox')
+    return folium_map._repr_html_()
+    # return render_template("about.html")
 
 
 @app.route("/stores")
 def stores():
 
-    cur = mysql.connection.cursor()
+    stores = sessionDb.query(Store).all()
 
-    result = cur.execute("SELECT * FROM stores")
-
-    stores = cur.fetchall()
-
-    if result > 0:
+    if stores:
         return render_template('stores.html', stores=stores)
     else:
         msg = 'No Stores Found'
         return render_template('stores.html', msg=msg)
 
-    cur.close()
-
 
 @app.route("/store/<string:id>/")
 def store(id):
 
-    cur = mysql.connection.cursor()
-
-    result = cur.execute("SELECT * FROM stores WHERE id = %s", [id])
-
-    store = cur.fetchone()
+    store = sessionDb.query(Store).filter(
+        Store.storeId == id).first()
 
     return render_template("store.html", store=store)
 
@@ -81,21 +107,17 @@ def register():
         email = form.email.data
         password = sha256_crypt.encrypt(str(form.password.data))
 
-        # create cursor
-        cur = mysql.connection.cursor()
+        if sessionDb.query(User).filter(User.userEmail == email).count() == 0:
+            data = User(userEmail=email, userPassword=password)
+            sessionDb.add(data)
+            sessionDb.commit()
+            flash('You are now registered and can log in now', 'success')
 
-        cur.execute(
-            "INSERT INTO users(email, password) VALUES(%s,%s)", (email, password))
-
-        # commit to DB
-        mysql.connection.commit()
-
-        # close connection
-        cur.close()
-
-        flash('You are now registered and can log in now', 'success')
+            return redirect(url_for('login'))
+        flash('Your email has already registered', 'danger')
 
         return redirect(url_for('login'))
+
     return render_template('register.html', form=form)
 
 
@@ -105,18 +127,12 @@ def login():
         email = request.form['email']
         password_candidate = request.form['password']
 
-        # create cursor
-        cur = mysql.connection.cursor()
+        user = sessionDb.query(User).filter(User.userEmail == email).first()
 
-        # Ger user by email
-        result = cur.execute("SELECT * FROM users WHERE email = %s", [email])
+        if user:
 
-        if result > 0:
-            # get stored hash
-            data = cur.fetchone()
-            password = data['password']
+            password = user.userPassword
 
-            # compare passwords
             if sha256_crypt.verify(password_candidate, password):
                 # passed
                 session['logged_in'] = True
@@ -124,14 +140,10 @@ def login():
 
                 flash('You are now logged in', 'success')
                 return redirect(url_for('dashboard'))
+
             else:
                 error = 'Invalid login'
-            return render_template('login.html', error=error)
-
-            cur.close()
-        else:
-            error = 'Email was not found'
-            return render_template('login.html', error=error)
+                return render_template('login.html', error=error)
 
     return render_template('login.html')
 
@@ -158,48 +170,48 @@ def logout():
 @app.route('/dashboard')
 @is_logged_in
 def dashboard():
+    store = sessionDb.query(Store).all()
 
-    cur = mysql.connection.cursor()
-
-    result = cur.execute("SELECT * FROM stores")
-
-    stores = cur.fetchall()
-
-    if result > 0:
-        return render_template('dashboard.html', stores=stores)
+    if store:
+        return render_template('dashboard.html', stores=store)
     else:
         msg = 'No Stores Found'
         return render_template('dashboard.html', msg=msg)
 
-    cur.close()
-
 
 class StoreForm(Form):
-    name = StringField(
-        'Name', [validators.Length(min=1, max=200)])
-    address = TextAreaField(
-        'Address', [validators.Length(min=10)])
-    category = StringField(
-        'Category', [validators.Length(min=1, max=30)])
+    storeName = StringField(
+        'Store Name', [validators.InputRequired()])
+    storeAddress = StringField(
+        'Address', [validators.InputRequired()])
+    Zipcode = IntegerField('Zip Code', [validators.NumberRange(
+        min=10115, max=14169, message='Berlin zip code is between 10115 to 14169')])
+    City = StringField('City', default='Berlin')
+
+    storeCategory = SelectField('Category', [validators.InputRequired()], choices=[('store', 'store'), ('Backery', 'Backery'), ('Coffee Shop', 'Coffee Shop'), (
+        'Icecream shop', 'Icecream shop'), ('Restuarant', 'Restuarant'), ('Florist', 'Florist'), ('Pharmacy', 'Pharmacy'), ('Bar', 'Bar'), ('Hair shop', 'Hair shop'), ('Public Bathroom', 'Public Bathroom'), ('Späti', 'Späti')])
+    note = StringField('Note')
 
 
-@app.route('/add_store', methods=['GET', 'POST'])
-@is_logged_in
+@ app.route('/add_store', methods=['GET', 'POST'])
+@ is_logged_in
 def add_store():
     form = StoreForm(request.form)
     if request.method == 'POST' and form.validate():
-        name = form.name.data
-        address = form.address.data
-        category = form.category.data
+        name = form.storeName.data
+        address = form.storeAddress.data
+        zipcode = form.Zipcode.data
+        city = form.City.data
+        category = form.storeCategory.data
+        note = form.note.data
 
-        cur = mysql.connection.cursor()
+        user = sessionDb.query(User).filter(
+            User.userEmail == session['email']).first()
 
-        cur.execute("INSERT INTO stores(name, address, category, poster) VALUES(%s,%s,%s,%s)",
-                    (name, address, category, session['email']))
-
-        mysql.connection.commit()
-
-        cur.close()
+        data = Store(storeName=name, storeAddress=address, storeZipcode=zipcode,
+                     storeCity=city, storeCategory=category, note=note, poster=user)
+        sessionDb.add(data)
+        sessionDb.commit()
 
         flash('Store added', 'success')
 
@@ -208,54 +220,45 @@ def add_store():
     return render_template('add_store.html', form=form)
 
 
-@app.route('/edit_store/<string:id>', methods=['GET', 'POST'])
-@is_logged_in
+@ app.route('/edit_store/<string:id>', methods=['GET', 'POST'])
+@ is_logged_in
 def edit_store(id):
 
-    cur = mysql.connection.cursor()
-
-    result = cur.execute("SELECT * FROM stores WHERE id = %s", [id])
-
-    store = cur.fetchone()
+    edit = sessionDb.query(Store).filter(Store.storeId == id).first()
 
     form = StoreForm(request.form)
 
-    form.name.data = store['name']
-    form.address.data = store['address']
-    form.category.data = store['category']
+    form.storeName.data = edit.storeName
+    form.storeAddress.data = edit.storeAddress
+    form.Zipcode.data = edit.storeZipcode
+    form.storeCategory.data = edit.storeCategory
+    form.note.data = edit.note
 
     if request.method == 'POST' and form.validate():
-        name = request.form['name']
-        address = request.form['address']
-        category = request.form['category']
+        storeName = form.storeName.data
+        edit.storeAddress = form.storeAddress.data
+        edit.storeZipcode = form.Zipcode.data
+        edit.storeCategory = form.storeCategory.data
+        edit.note = form.note.data
+        print(storeName)
+        try:
+            sessionDb.commit()
+            flash('Store Updated', 'success')
 
-        cur = mysql.connection.cursor()
-
-        cur.execute("UPDATE stores SET name = %s, address = %s, category = %s WHERE id = %s",
-                    (name, address, category, id))
-
-        mysql.connection.commit()
-
-        cur.close()
-
-        flash('Store Updated', 'success')
-
-        return redirect(url_for('dashboard'))
-
+            return redirect(url_for('dashboard'))
+        except:
+            error = 'cannot edit the store'
+            return redirect(url_for('dashboard'), error=error)
     return render_template('edit_store.html', form=form)
 
 
-@app.route('/delete_store/<string:id>', methods=['POST'])
-@is_logged_in
+@ app.route('/delete_store/<string:id>', methods=['POST'])
+@ is_logged_in
 def delete_store(id):
 
-    cur = mysql.connection.cursor()
-
-    cur.execute("DELETE FROM stores WHERE id = %s", [id])
-
-    mysql.connection.commit()
-
-    cur.close()
+    post = sessionDb.query(Store).filter(Store.storeId == id).first()
+    sessionDb.delete(post)
+    sessionDb.commit()
 
     flash('Store Deleted', 'success')
 
@@ -264,4 +267,5 @@ def delete_store(id):
 
 if __name__ == "__main__":
     app.secret_key = 'secret123'
-    app.run(host="localhost", port=8080, debug=True)
+    port = os.environ.get("PORT", 5000)
+    app.run(host="0.0.0.0", port=port, debug=True)

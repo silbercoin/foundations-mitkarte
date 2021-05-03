@@ -6,30 +6,31 @@
     <hr>
     <table class="table table-striped">
       <tr>
-        <th>ID</th>
-        <th>Store name</th>
+        <th>Id</th>
+        <th>Store</th>
         <th>Address</th>
+        <th>Zipcode</th>
+        <th>City</th>
         <th>Category</th>
-        <th>poster</th>
-        <th>Date</th>
+        <th>Note</th>
         <th></th>
         <th></th>
       </tr>
       {% for store in stores %}
         <tr>
-          <td>{{store.id}}</td>
-          <td>{{store.name}}</td>
-          <td>{{store.address}}</td>
-          <td>{{store.category}}</td>
-          <td>{{store.poster}}</td>
-          <td>{{store.post_date}}</td>
-          <td><a href="edit_store/{{store.id}}" class="btn btn-default pull-right">Edit</a></td>
+          <th>{{store.storeId}}</th>
+          <td>{{store.storeName}}</td>
+          <td>{{store.storeAddress}}</td>
+          <td>{{store.storeZipcode}}</td>
+          <td>{{store.storeCity}}</td>
+          <td>{{store.storeCategory}}</td>
+          <td>{{store.note}}</td>
+          <td><a href="edit_store/{{store.storeId}}" class="btn btn-info pull-right">Edit</a></td>
           <td>
-            <form action="{{url_for('delete_store', id=store.id)}}" method="POST">
+            <form action="{{url_for('delete_store', id=store.storeId)}}" method="POST">
               <input type="hidden" name="_method" value="DELETE">
               <input type="submit" value="Delete" class="btn btn-danger">
             </form>
-          </td>
         </tr>
       {% endfor%}
     </table>

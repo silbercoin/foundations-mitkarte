@@ -1,16 +1,23 @@
 {% extends "base.html" %}
 
 {% block body %}
-    <h1>{{store.name}}</h1>
-    <small>Posted by {{store.poster}} on {{store.post_date}}</small>
+    <h1>{{store.storeName}}</h1>
+    <small>Posted by poster Id {{store.posterId}} on {{store.posttime}}</small>
     <hr>
     <div>
-        {{store.address}}
+        
+        {{store.storeAddress}}
+        {{store.storeZipcode}}
+        {{store.storeCity}}
         
     </div>
     <br>
     <div>
-        Store category is : {{store.category}}
+        Store category : {{store.storeCategory}}
+    </div>
+    <br>
+    <div>
+        Store Note : {{store.note}}
     </div>
     
 {% endblock %}  
